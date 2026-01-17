@@ -257,14 +257,18 @@ generate_mbtiles() {
     fi
 
     log_info "Running Planetiler..."
-    log_info "Command: java -jar planetiler.jar --download --area=$REGION --profile=openmaptiles --output=${REGION}.mbtiles --threads=$THREADS"
+    log_info "Settings: area=$REGION, threads=$THREADS, nodemap=sparsearray, storage=mmap"
     echo ""
 
     # Run Planetiler
     if ! java -jar planetiler.jar \
         --download \
+        --download-threads=10 \
+        --download-chunk-size-mb=1000 \
         --area="$REGION" \
         --profile=openmaptiles \
+        --nodemap-type=sparsearray \
+        --storage=mmap \
         --output="${REGION}.mbtiles" \
         --threads="$THREADS"; then
         log_error "Planetiler execution failed"

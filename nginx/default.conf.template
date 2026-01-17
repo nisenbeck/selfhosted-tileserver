@@ -1,0 +1,62 @@
+#user nginx;
+#worker_processes auto;
+#pid /var/run/nginx.pid;
+#events {
+#    worker_connections 1024;
+#}
+
+#http {
+#    include       /etc/nginx/mime.types;
+#    default_type  application/octet-stream;
+
+    proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=tile_cache:100m max_size=10g inactive=7d use_temp_path=off;
+
+    proxy_connect_timeout       300;
+    proxy_send_timeout          300;
+    proxy_read_timeout          300;
+    send_timeout                300;
+
+    server_tokens off;
+
+    server {
+        listen 8081 default_server;
+        server_name _;
+
+        # Tile cache proxy for custom styles
+        location ~ ^/styles/([a-zA-Z0-9]+)/([0-9]+)/([0-9]+)/([0-9]+)(@[23]x)?\.png$ {
+            set $style $1;
+            set $z $2;
+            set $x $3;
+            set $y $4;
+            set $scale $5;  # Can be empty, @2x, or @3x
+            
+            # Proxy configuration with caching
+            proxy_cache tile_cache;
+            proxy_cache_key "$style:$scale:$z:$x:$y";
+            proxy_cache_valid 200 7d;
+            proxy_cache_valid 404 1h;
+            proxy_cache_valid any 1m;
+            proxy_cache_methods GET HEAD;
+
+            proxy_cache_lock on;
+            proxy_cache_lock_timeout 5s;
+            proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+            add_header X-Cache-Status $upstream_cache_status always;
+            proxy_hide_header Access-Control-Allow-Origin;
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            proxy_set_header Accept-Encoding "";  # disable compression
+            
+            proxy_set_header Host $host;
+            proxy_pass http://${TILESERVER_APP};
+        }
+
+        location = /favicon.ico {
+            return 404;
+        }
+
+        # Reject all other requests
+        location / {
+            return 404;
+        }
+    }
+#}

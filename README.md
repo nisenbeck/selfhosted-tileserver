@@ -1,6 +1,6 @@
 # TileServer GL - OpenMapTiles Setup
 
-Self-hosted vector tile server with OpenMapTiles styles and custom tile generation.
+Self-hosted tile server with OpenMapTiles styles, custom tile generation, and nginx caching proxy.
 
 ## Overview
 
@@ -8,23 +8,41 @@ This setup provides a complete self-hosted map tile server using:
 - **TileServer GL** - Vector tile server with MapLibre GL rendering
 - **OpenMapTiles** - Open-source map styles (OSM + OSM Bright)
 - **Planetiler** - Fast OpenStreetMap tile generator
+- **Nginx Caching Proxy** - High-performance tile cache with 7-day retention
+
+## Architecture
+```
+Client Request
+     ↓
+Nginx Cache (Port 8081)
+     ↓ (cache miss)
+TileServer GL (Port 8080, localhost only)
+     ↓
+MBTiles Database
+```
+
+**Security:**
+- TileServer GL is only accessible via localhost
+- Nginx proxy validates requests and serves only raster tiles
+- All other endpoints are blocked (404)
 
 ## Directory Structure
-
 ```
 .
-├── setup-styles.sh          # Install map styles and fonts
-├── setup-tiles.sh           # Generate MBTiles from OSM data
-├── docker-compose.yaml       # TileServer GL container config
+├── setup-styles.sh           # Install map styles and fonts
+├── setup-tiles.sh            # Generate MBTiles from OSM data
+├── docker-compose.yaml       # Container orchestration
+├── nginx/
+│   └── default.conf.template # Nginx cache configuration
 ├── data/
-│   ├── config.json         # TileServer configuration
-│   ├── fonts/              # Web fonts (Noto Sans, Roboto, etc.)
-│   ├── styles/             # Map styles
-│   │   ├── osm/            # OpenMapTiles default style
-│   │   └── osm-bright/     # OSM Bright style
+│   ├── config.json           # TileServer configuration
+│   ├── fonts/                # Web fonts (Noto Sans, Roboto, etc.)
+│   ├── styles/               # Map styles
+│   │   ├── osm/              # OpenMapTiles default style
+│   │   └── osm-bright/       # OSM Bright style
 │   └── tiles/
-│       └── tiles.mbtiles   # Vector tiles (generated)
-└── build/                  # Build artifacts (git clones, etc.)
+│       └── tiles.mbtiles     # Vector tiles (generated)
+└── build/                    # Build artifacts (git clones, etc.)
 ```
 
 ## Quick Start
@@ -64,6 +82,7 @@ This script will:
 - Deploy to `data/tiles/tiles.mbtiles`
 
 **Available regions:** `germany`, `europe`, `north-america`, `planet`, etc.
+
 See [Geofabrik](https://download.geofabrik.de/) for all available regions.
 
 ### 3. Start TileServer
@@ -73,6 +92,27 @@ docker compose up -d
 ```
 
 Access your tile server at: `http://localhost:8080`
+
+## API Endpoints
+
+### Raster Tiles (via Nginx Cache)
+```
+GET /styles/{style}/{z}/{x}/{y}.png       # Standard resolution (256px)
+GET /styles/{style}/{z}/{x}/{y}@2x.png    # Retina resolution (512px)
+GET /styles/{style}/{z}/{x}/{y}@3x.png    # High-DPI resolution (768px)
+```
+
+**Available styles:** `osm`, `osm-bright`
+
+**Cache behavior:**
+- Successful tiles (200): Cached for 7 days
+- Not found (404): Cached for 1 hour
+- Other errors: Cached for 1 minute
+- Cache header: `X-Cache-Status` (HIT/MISS/EXPIRED)
+
+### All Other Endpoints
+
+All requests outside the raster tile pattern return `404 Not Found`.
 
 ## Advanced Usage
 
@@ -101,6 +141,36 @@ docker compose down && docker compose up -d
 
 **Note:** Old tiles are automatically replaced (no backup is created due to file size).
 
+### Clear Nginx Cache
+```bash
+# Stop containers
+docker compose down
+
+# Remove cache volume
+docker volume rm tileserver_nginx-cache-data
+
+# Restart
+docker compose up -d
+```
+
+### Monitor Cache Performance
+```bash
+# Watch cache hit rate
+docker compose logs -f nginx-cache | grep "X-Cache-Status"
+```
+
+## Nginx Cache Configuration
+
+The nginx caching proxy provides:
+- **7-day tile caching** for optimal performance
+- **CORS headers** enabled for cross-origin requests
+- **Compression disabled** (PNG tiles are already compressed)
+- **Cache locking** to prevent thundering herd
+- **Stale cache serving** during backend errors
+- **4GB max cache size** with automatic eviction
+
+Cache is stored in a Docker volume and persists across container restarts.
+
 ## System Requirements
 
 ### Hardware
@@ -127,12 +197,20 @@ Automatically installed by scripts:
 ## Available Styles
 
 ### OSM (OpenMapTiles Default)
+
 Complete OpenMapTiles style with detailed rendering for all zoom levels and full feature coverage.
 
 ### OSM Bright
+
 Clean, bright color scheme optimized for readability, based on the official OSM Bright style.
 
-Both styles are pre-configured to use local MBTiles data.
+Both styles are pre-configured to use local MBTiles data and are accessible through the nginx cache.
+
+### Performance issues
+
+- Increase `max_size` in `nginx/default.conf.template` for larger cache
+- Add more RAM to tile generation: `JAVA_TOOL_OPTIONS="-Xmx16G"`
+- Use faster storage
 
 ## Resources
 
@@ -140,6 +218,7 @@ Both styles are pre-configured to use local MBTiles data.
 - [OpenMapTiles](https://openmaptiles.org/)
 - [Planetiler](https://github.com/onthegomap/planetiler)
 - [Geofabrik Downloads](https://download.geofabrik.de/)
+- [Nginx Caching Guide](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_cache)
 
 ## License
 
@@ -147,4 +226,5 @@ This setup uses open-source components:
 - TileServer GL - BSD 2-Clause License
 - OpenMapTiles - BSD 3-Clause License
 - Planetiler - Apache License 2.0
-- Map data © OpenStreetMap contributors - Open Data Commons Open Database-Lizenz (ODbL)
+- Nginx - BSD 2-Clause License
+- Map data © OpenStreetMap contributors - Open Data Commons Open Database License (ODbL)

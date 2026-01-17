@@ -1,8 +1,48 @@
+networks:
+   tileserver-net:
+
 services:
-  tileserver:
+  tileserver-init:
+    image: docker.io/library/alpine
+    networks:
+      - tileserver-net
+    restart: "no"
+    entrypoint: |
+      /bin/sh -c "mkdir -p /data/cache && chown -R 101:101 /data/cache"
+    volumes:
+      - ./data/cache:/data/cache
+
+  tileserver-app:
+    container_name: tileserver-app
+    restart: unless-stopped
     image: maptiler/tileserver-gl
+    networks:
+      - tileserver-net
     volumes:
       - ./data:/data:ro
     command: ["-p", "8080", "-c", "/data/config.json"]
+    expose:
+      - 8080
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
+    security_opt:
+      - no-new-privileges
+
+  tileserver-cache:
+    container_name: tileserver-cache
+    restart: unless-stopped
+    image: docker.io/nginxinc/nginx-unprivileged
+    networks:
+      - tileserver-net
+    depends_on:
+      - tileserver-init
+      - tileserver-app
+    volumes:
+      - ./nginx:/etc/nginx/templates:ro
+      - ./data/cache:/var/cache/nginx
+    ports:
+      - "0.0.0.0:8081:8081"
+    security_opt:
+      - no-new-privileges
+    environment:
+      - TILESERVER_APP=tileserver-app:8080

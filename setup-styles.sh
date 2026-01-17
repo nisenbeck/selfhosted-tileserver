@@ -11,6 +11,9 @@ set -euo pipefail
 # - Fixes style.json for local usage
 # - Sets up OSM Bright style
 #
+# NOTE: This script is ONLY needed for updating styles/fonts.
+#       For normal tileserver operation, you do NOT need to run this.
+#
 # Usage: Run from tileserver-gl directory (where docker-compose.yaml is)
 #==============================================================================
 
@@ -44,6 +47,41 @@ cleanup() {
 trap cleanup EXIT
 
 #==============================================================================
+# Initial Warning
+#==============================================================================
+
+show_warning() {
+    echo ""
+    log_warn "╔════════════════════════════════════════════════════════════════╗"
+    log_warn "║                        IMPORTANT NOTICE                        ║"
+    log_warn "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_warn "This script is ONLY needed if you want to UPDATE styles or fonts."
+    log_warn "For normal tileserver operation, you do NOT need to run this!"
+    echo ""
+    log_warn "This script will:"
+    log_warn "  - Clone OpenMapTiles repositories"
+    log_warn "  - Download fonts (~100MB+)"
+    log_warn "  - Build sprites and styles"
+    log_warn "  - Update data/styles/ and data/fonts/"
+    echo ""
+    log_info "Continue? (y/N) [10s timeout, default: N]"
+
+    if read -t 10 -n 1 -r; then
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Aborted by user"
+            exit 0
+        fi
+    else
+        echo
+        log_info "Timeout - aborting"
+        exit 0
+    fi
+    echo ""
+}
+
+#==============================================================================
 # Dependency Checks
 #==============================================================================
 
@@ -51,25 +89,52 @@ check_dependencies() {
     log_info "Checking dependencies..."
 
     local missing=()
-    for cmd in git docker jq sed make; do
+
+    # Check all dependencies
+    for cmd in git jq sed make; do
         if ! command -v "$cmd" &> /dev/null; then
             missing+=("$cmd")
         fi
     done
 
+    # Install missing dependencies
     if [ ${#missing[@]} -gt 0 ]; then
-        log_error "Missing required dependencies: ${missing[*]}"
-        log_error "Install with: apt-get install -y ${missing[*]}"
+        log_info "Installing missing dependencies: ${missing[*]}"
+
+        if ! apt-get update; then
+            log_error "apt-get update failed"
+            exit 1
+        fi
+
+        if ! apt-get install -y "${missing[@]}"; then
+            log_error "Failed to install dependencies: ${missing[*]}"
+            exit 1
+        fi
+
+        log_info "✓ Dependencies installed: ${missing[*]}"
+    else
+        log_info "✓ All dependencies present"
+    fi
+}
+
+check_docker() {
+    log_info "Checking Docker..."
+
+    if ! command -v docker &> /dev/null; then
+        log_error "Docker is not installed"
+        log_error "Please install Docker before running this script"
+        log_error "See: https://docs.docker.com/engine/install/"
         exit 1
     fi
 
     if ! docker compose version &> /dev/null; then
         log_error "Docker Compose V2 not available"
+        log_error "Please install Docker Compose plugin"
         log_error "Install with: apt-get install -y docker-compose-plugin"
         exit 1
     fi
 
-    log_info "✓ All dependencies present"
+    log_info "✓ Docker and Docker Compose available"
 }
 
 verify_directories() {
@@ -368,6 +433,9 @@ copy_osm_bright_style() {
 #==============================================================================
 
 main() {
+    # Show warning first
+    show_warning
+
     echo ""
     log_info "=== OpenMapTiles Style Setup ==="
     log_info "Working directory: $SCRIPT_DIR"
@@ -376,6 +444,7 @@ main() {
     # Phase 1: Validation
     log_info "--- Phase 1: Validation ---"
     check_dependencies
+    check_docker
     verify_directories
     echo ""
 

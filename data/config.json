@@ -1,0 +1,27 @@
+{
+  "options": {
+    "paths": {
+      "fonts": "fonts",
+      "styles": "styles"
+    }
+  },
+  "styles": {
+    "osm-bright": {
+      "style": "osm-bright/style.json",
+      "tilejson": {
+        "type": "overlay"
+      }
+    },
+    "osm": {
+      "style": "osm/style.json",
+      "tilejson": {
+        "type": "overlay"
+      }
+    }
+  },
+  "data": {
+    "openmaptiles": {
+      "mbtiles": "tiles/tiles.mbtiles"
+    }
+  }
+}

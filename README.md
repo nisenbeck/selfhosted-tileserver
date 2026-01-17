@@ -141,24 +141,6 @@ docker compose down && docker compose up -d
 
 **Note:** Old tiles are automatically replaced (no backup is created due to file size).
 
-### Clear Nginx Cache
-```bash
-# Stop containers
-docker compose down
-
-# Remove cache volume
-docker volume rm tileserver_nginx-cache-data
-
-# Restart
-docker compose up -d
-```
-
-### Monitor Cache Performance
-```bash
-# Watch cache hit rate
-docker compose logs -f nginx-cache | grep "X-Cache-Status"
-```
-
 ## Nginx Cache Configuration
 
 The nginx caching proxy provides:
@@ -167,7 +149,7 @@ The nginx caching proxy provides:
 - **Compression disabled** (PNG tiles are already compressed)
 - **Cache locking** to prevent thundering herd
 - **Stale cache serving** during backend errors
-- **4GB max cache size** with automatic eviction
+- **10GB max cache size** with automatic eviction
 
 Cache is stored in a Docker volume and persists across container restarts.
 

@@ -78,13 +78,19 @@ detect_system_resources() {
         THREADS=$threads_auto
     fi
 
-    # Export Java options
-    export JAVA_TOOL_OPTIONS="-Xms${ram_for_java}G -Xmx${ram_for_java}G"
+    # Set Java options only if not already set
+    if [ -z "${JAVA_TOOL_OPTIONS:-}" ]; then
+        export JAVA_TOOL_OPTIONS="-Xms${ram_for_java}G -Xmx${ram_for_java}G"
+        java_heap_msg="${ram_for_java}GB (Xms/Xmx, auto-detected)"
+    else
+        java_heap_msg="Custom (JAVA_TOOL_OPTIONS already set)"
+    fi
 
     log_info "✓ System resources detected:"
     log_info "  Total RAM: ${total_ram_gb}GB"
     log_info "  CPU Cores: ${cpu_cores}"
-    log_info "  Java Heap: ${ram_for_java}GB (Xms/Xmx)"
+    log_info "  Java Heap: ${java_heap_msg}"
+
     log_info "  Threads:   ${THREADS}"
 }
 

@@ -173,7 +173,6 @@ Automatically installed by scripts:
 - `jq`
 - `sed`
 - `make`
-- `wget`
 - `openjdk-21-jre`
 
 ## Available Styles

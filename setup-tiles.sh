@@ -6,6 +6,7 @@ set -euo pipefail
 #
 # This script automates the setup and execution of Planetiler:
 # - Installs Java 21 JRE if needed
+# - Installs required dependencies (curl, jq) if needed
 # - Downloads latest Planetiler release
 # - Detects optimal hardware settings (RAM, CPU cores)
 # - Generates MBTiles for specified region
@@ -90,7 +91,6 @@ detect_system_resources() {
     log_info "  Total RAM: ${total_ram_gb}GB"
     log_info "  CPU Cores: ${cpu_cores}"
     log_info "  Java Heap: ${java_heap_msg}"
-
     log_info "  Threads:   ${THREADS}"
 }
 
@@ -98,60 +98,67 @@ detect_system_resources() {
 # Dependency Checks
 #==============================================================================
 
-check_java() {
-    log_info "Checking Java installation..."
-
-    if command -v java &> /dev/null; then
-        local java_version=$(java -version 2>&1 | head -n 1 | awk -F '"' '{print $2}')
-        local java_major=$(echo "$java_version" | cut -d'.' -f1)
-
-        if [ "$java_major" -ge 21 ]; then
-            log_info "✓ Java $java_version found"
-            return 0
-        else
-            log_warn "Java $java_version found, but Java 21+ required"
-        fi
-    fi
-
-    # Install Java 21
-    log_info "Installing OpenJDK 21 JRE..."
-    if ! apt-get update; then
-        log_error "apt-get update failed"
-        exit 1
-    fi
-
-    if ! apt-get install -y openjdk-21-jre; then
-        log_error "Failed to install openjdk-21-jre"
-        exit 1
-    fi
-
-    log_info "✓ OpenJDK 21 JRE installed"
-}
-
 check_dependencies() {
     log_info "Checking dependencies..."
 
     local missing=()
-    for cmd in wget curl jq; do
+
+    # Check all dependencies
+    for cmd in curl jq java; do
         if ! command -v "$cmd" &> /dev/null; then
-            missing+=("$cmd")
+            if [ "$cmd" = "java" ]; then
+                missing+=("openjdk-21-jre")
+            else
+                missing+=("$cmd")
+            fi
         fi
     done
 
+    # Install missing dependencies
     if [ ${#missing[@]} -gt 0 ]; then
-        log_error "Missing required dependencies: ${missing[*]}"
-        log_error "Install with: apt-get install -y ${missing[*]}"
+        log_info "Installing missing dependencies: ${missing[*]}"
+
+        if ! apt-get update; then
+            log_error "apt-get update failed"
+            exit 1
+        fi
+
+        if ! apt-get install -y "${missing[@]}"; then
+            log_error "Failed to install dependencies: ${missing[*]}"
+            exit 1
+        fi
+
+        log_info "✓ Dependencies installed: ${missing[*]}"
+    else
+        log_info "✓ All dependencies present"
+    fi
+}
+
+check_java() {
+    log_info "Validating Java version..."
+
+    if ! command -v java &> /dev/null; then
+        log_error "Java not found after installation"
         exit 1
     fi
 
-    log_info "✓ All dependencies present"
+    local java_version=$(java -version 2>&1 | head -n 1 | awk -F '"' '{print $2}')
+    local java_major=$(echo "$java_version" | cut -d'.' -f1)
+
+    if [ "$java_major" -lt 21 ]; then
+        log_error "Java $java_version found, but Java 21+ required"
+        log_error "Please install OpenJDK 21 manually: apt-get install openjdk-21-jre"
+        exit 1
+    fi
+
+    log_info "✓ Java $java_version validated"
 }
 
 verify_directories() {
     log_info "Verifying directory structure..."
 
-    if [ ! -f "$SCRIPT_DIR/docker-compose.yml" ]; then
-        log_warn "docker-compose.yml not found in $SCRIPT_DIR"
+    if [ ! -f "$SCRIPT_DIR/docker-compose.yaml" ]; then
+        log_warn "docker-compose.yaml not found in $SCRIPT_DIR"
         log_warn "Are you running this from the tileserver directory?"
     fi
 
@@ -214,7 +221,7 @@ download_planetiler() {
     log_info "Downloading Planetiler $latest_version..."
     log_info "URL: $download_url"
 
-    if ! wget -q --show-progress -O "$PLANETILER_JAR" "$download_url"; then
+    if ! curl -L --progress-bar -o "$PLANETILER_JAR" "$download_url"; then
         log_error "Download failed"
         exit 1
     fi
@@ -355,9 +362,9 @@ main() {
 
     # Phase 1: System Check
     log_info "--- Phase 1: System Check ---"
-    detect_system_resources
     check_dependencies
     check_java
+    detect_system_resources
     verify_directories
     echo ""
 

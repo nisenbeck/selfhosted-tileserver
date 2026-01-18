@@ -23,7 +23,7 @@
         server_name _;
 
         # Tile cache proxy for custom styles
-        location ~ ^/styles/([a-zA-Z0-9]+)/([0-9]+)/([0-9]+)/([0-9]+)(@[23]x)?\.png$ {
+        location ~ ^/styles/([a-zA-Z0-9-_]+)/([0-9]+)/([0-9]+)/([0-9]+)(@[23]x)?\.png$ {
             set $style $1;
             set $z $2;
             set $x $3;

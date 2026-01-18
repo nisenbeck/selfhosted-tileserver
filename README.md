@@ -71,6 +71,9 @@ This script will:
 
 # With custom thread count
 ./setup-tiles.sh germany 8
+
+# To generate planet tiles, at least 32 GB of memory is required
+./setup-tiles.sh planet
 ```
 
 This script will:

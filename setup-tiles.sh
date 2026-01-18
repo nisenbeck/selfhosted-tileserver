@@ -58,20 +58,25 @@ detect_system_resources() {
     local cpu_cores=$(nproc)
 
     # Calculate optimal settings
-    # Use 80% of RAM, minimum 2GB, maximum 32GB
-    local ram_for_java=$((total_ram_gb * 80 / 100))
+    # Use 90% of RAM for planet, 80% for other regions
+    if [ "$REGION" = "planet" ]; then
+        local ram_for_java=$((total_ram_gb * 95 / 100))
+    else
+        local ram_for_java=$((total_ram_gb * 80 / 100))
+    fi
+
     if [ $ram_for_java -lt 2 ]; then
         ram_for_java=2
-    elif [ $ram_for_java -gt 32 ]; then
-        ram_for_java=32
+    elif [ $ram_for_java -gt 128 ]; then
+        ram_for_java=128
     fi
 
     # Use 80% of CPU cores, minimum 1, maximum 16
     local threads_auto=$((cpu_cores * 80 / 100))
     if [ $threads_auto -lt 1 ]; then
         threads_auto=1
-    elif [ $threads_auto -gt 16 ]; then
-        threads_auto=16
+    elif [ $threads_auto -gt 32 ]; then
+        threads_auto=32
     fi
 
     # Set threads if auto-detect requested

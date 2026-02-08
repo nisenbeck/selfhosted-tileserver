@@ -15,7 +15,7 @@ services:
   tileserver-app:
     container_name: tileserver-app
     restart: unless-stopped
-    image: maptiler/tileserver-gl
+    image: docker.io/maptiler/tileserver-gl:v5.5.0
     networks:
       - tileserver-net
     volumes:
@@ -41,7 +41,7 @@ services:
       - ./nginx:/etc/nginx/templates:ro
       - ./data/cache:/var/cache/nginx
     ports:
-      - "0.0.0.0:8081:8081"
+      - "127.0.0.1:8081:8081"
     security_opt:
       - no-new-privileges
     environment:

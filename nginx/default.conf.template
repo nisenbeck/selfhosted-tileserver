@@ -23,12 +23,13 @@
         server_name _;
 
         # Tile cache proxy for custom styles
-        location ~ ^/styles/([a-zA-Z0-9-_]+)/([0-9]+)/([0-9]+)/([0-9]+)(@[23]x)?\.png$ {
+        location ~ ^/styles/([a-zA-Z0-9-_]+)/([0-9]+)/([0-9]+)/([0-9]+)(@[23]x)?\.(png|webp)$ {
             set $style $1;
             set $z $2;
             set $x $3;
             set $y $4;
             set $scale $5;  # Can be empty, @2x, or @3x
+            set $format $6; # png or webp
             
             # Set default scale if empty
             if ($scale = "") {
@@ -37,7 +38,7 @@
 
             # Proxy configuration with caching
             proxy_cache tile_cache;
-            proxy_cache_key "$style:$scale:$z:$x:$y";
+            proxy_cache_key "$style:$scale:$z:$x:$y:$format";
             proxy_cache_valid 200 7d;
             proxy_cache_valid 404 1h;
             proxy_cache_valid any 1m;

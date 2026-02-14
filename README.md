@@ -8,21 +8,24 @@ This setup provides a complete self-hosted map tile server using:
 - **TileServer GL** - Vector tile server with MapLibre GL rendering
 - **OpenMapTiles** - Open-source map styles (OSM + OSM Bright)
 - **Planetiler** - Fast OpenStreetMap tile generator
-- **Nginx Caching Proxy** - High-performance tile cache with 7-day retention
+- **Nginx Caching Proxy** - High-performance tile cache with 14-day retention
 
 ## Architecture
 ```
 Client Request
      ↓
-Nginx Cache (Port 8081)
+Nginx Cache (Port 8081, localhost only)
      ↓ (cache miss)
 TileServer GL (Port 8080, localhost only)
      ↓
 MBTiles Database
+
+Init Container → creates cache directory with correct permissions
 ```
 
 **Security:**
-- TileServer GL is only accessible via localhost
+- TileServer GL is only accessible via localhost (Port 8080)
+- Nginx cache is only accessible via localhost (Port 8081)
 - Nginx proxy validates requests and serves only raster tiles
 - All other endpoints are blocked (404)
 
@@ -36,6 +39,7 @@ MBTiles Database
 │   └── default.conf.template # Nginx cache configuration
 ├── data/
 │   ├── config.json           # TileServer configuration
+│   ├── cache/                # Nginx tile cache (Docker volume)
 │   ├── fonts/                # Web fonts (Noto Sans, Roboto, etc.)
 │   ├── styles/               # Map styles
 │   │   ├── osm/              # OpenMapTiles default style
@@ -94,24 +98,34 @@ See [Geofabrik](https://download.geofabrik.de/) for all available regions.
 docker compose up -d
 ```
 
-Access your tile server at: `http://localhost:8080`
+Access tiles via the nginx cache at: `http://localhost:8081`
+Access the TileServer GL UI at: `http://localhost:8080`
 
 ## API Endpoints
 
-### Raster Tiles (via Nginx Cache)
+### Raster Tiles (via Nginx Cache, Port 8081)
 ```
-GET /styles/{style}/{z}/{x}/{y}.png       # Standard resolution (256px)
-GET /styles/{style}/{z}/{x}/{y}@2x.png    # Retina resolution (512px)
-GET /styles/{style}/{z}/{x}/{y}@3x.png    # High-DPI resolution (768px)
+GET /styles/{style}/{z}/{x}/{y}.png        # Standard resolution (256px)
+GET /styles/{style}/{z}/{x}/{y}@2x.png     # Retina resolution (512px)
+GET /styles/{style}/{z}/{x}/{y}@3x.png     # High-DPI resolution (768px)
+GET /styles/{style}/{z}/{x}/{y}.webp       # Standard resolution (WebP)
+GET /styles/{style}/{z}/{x}/{y}@2x.webp    # Retina resolution (WebP)
+GET /styles/{style}/{z}/{x}/{y}@3x.webp    # High-DPI resolution (WebP)
 ```
 
 **Available styles:** `osm`, `osm-bright`
+**Available formats:** `png`, `webp`
 
-**Cache behavior:**
-- Successful tiles (200): Cached for 7 days
+**Server-side cache behavior:**
+- Successful tiles (200): Cached for 7 days, evicted after 14 days of inactivity
 - Not found (404): Cached for 1 hour
 - Other errors: Cached for 1 minute
 - Cache header: `X-Cache-Status` (HIT/MISS/EXPIRED)
+
+**Client-side cache behavior:**
+- `max-age`: 7 days
+- `stale-while-revalidate`: 14 days
+- `stale-if-error`: 14 days
 
 ### All Other Endpoints
 
@@ -147,11 +161,12 @@ docker compose down && docker compose up -d
 ## Nginx Cache Configuration
 
 The nginx caching proxy provides:
-- **7-day tile caching** for optimal performance
+- **7-day server-side tile caching** with 14-day inactive eviction
 - **CORS headers** enabled for cross-origin requests
-- **Compression disabled** (PNG tiles are already compressed)
+- **Compression disabled** (PNG/WebP tiles are already compressed)
 - **Cache locking** to prevent thundering herd
 - **Stale cache serving** during backend errors
+- **Client-side caching** with `stale-while-revalidate` and `stale-if-error`
 - **10GB max cache size** with automatic eviction
 
 Cache is stored in a Docker volume and persists across container restarts.
@@ -173,6 +188,7 @@ Automatically installed by scripts:
 - `git`
 - `docker`
 - `docker-compose-plugin`
+- `curl`
 - `jq`
 - `sed`
 - `make`

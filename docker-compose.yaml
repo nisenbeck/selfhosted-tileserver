@@ -15,7 +15,7 @@ services:
   tileserver-app:
     container_name: tileserver-app
     restart: unless-stopped
-    image: docker.io/maptiler/tileserver-gl:v5.5.0
+    image: docker.io/maptiler/tileserver-gl:v5.6.0
     networks:
       - tileserver-net
     volumes:

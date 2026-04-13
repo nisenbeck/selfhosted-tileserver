@@ -12,7 +12,7 @@ set -euo pipefail
 # - Generates MBTiles for specified region
 # - Moves output to ./data/tiles/
 #
-# Usage: ./setup-planetiler.sh [region] [threads]
+# Usage: ./setup-tiles.sh [region] [threads]
 #   region:  OSM region name (default: germany)
 #   threads: Number of threads (default: auto-detect)
 #==============================================================================

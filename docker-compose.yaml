@@ -31,7 +31,7 @@ services:
   tileserver-cache:
     container_name: tileserver-cache
     restart: unless-stopped
-    image: docker.io/nginxinc/nginx-unprivileged
+    image: docker.io/nginxinc/nginx-unprivileged:1.31
     networks:
       - tileserver-net
     depends_on:

@@ -67,7 +67,7 @@ Init Container → creates cache directory with correct permissions
 │   │   └── osm-bright/       # OSM Bright style
 │   └── tiles/
 │       └── tiles.mbtiles     # Vector tiles (generated)
-└── build/                    # Build artifacts (git clones, etc.)
+└── build/                    # Build artifacts (git clones, stage directory, etc.)
 ```
 
 ## Quick Start
@@ -214,6 +214,8 @@ docker compose up -d --force-recreate
 ./setup-styles.sh
 docker compose up -d --force-recreate
 ```
+
+The script builds all files in `build/stage/` first. Then it copies only files with changed content to `data/`. Unchanged files keep their modification time, thus the tile cache stays valid. If no file changed, the script tells you that a restart is not necessary.
 
 ### Regenerate Tiles for Different Region
 

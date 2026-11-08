@@ -21,6 +21,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$SCRIPT_DIR/build"
 DATA_DIR="$SCRIPT_DIR/data"
+# All files are built here first. Only changed files go to data/ (see install_staged_files).
+STAGE_DIR="$BUILD_DIR/stage"
 OPENMAPTILES_DIR="$BUILD_DIR/openmaptiles"
 OSM_BRIGHT_DIR="$BUILD_DIR/osm-bright-gl-style"
 
@@ -150,8 +152,13 @@ verify_directories() {
     mkdir -p "$BUILD_DIR"
     mkdir -p "$DATA_DIR"
 
+    # Start with an empty stage directory
+    rm -rf "$STAGE_DIR"
+    mkdir -p "$STAGE_DIR"
+
     log_info "✓ Working directory: $SCRIPT_DIR"
     log_info "✓ Build directory: $BUILD_DIR"
+    log_info "✓ Stage directory: $STAGE_DIR"
     log_info "✓ Data directory: $DATA_DIR"
 }
 
@@ -244,44 +251,44 @@ build_style() {
 }
 
 #==============================================================================
-# Copy Assets to Data Directory
+# Copy Assets to Stage Directory
 #==============================================================================
 
 copy_fonts() {
-    log_info "Copying fonts to data/fonts..."
+    log_info "Copying fonts to build/stage/fonts..."
 
     if [ ! -d "data/fonts" ]; then
         log_error "Fonts directory not found: $OPENMAPTILES_DIR/data/fonts"
         exit 1
     fi
 
-    if ! cp -pr data/fonts "$DATA_DIR/"; then
+    if ! cp -pr data/fonts "$STAGE_DIR/"; then
         log_error "Failed to copy fonts"
         exit 1
     fi
 
-    log_info "✓ Fonts copied to data/fonts"
+    log_info "✓ Fonts copied to build/stage/fonts"
 }
 
 copy_osm_style() {
-    log_info "Copying OSM style to data/styles/osm..."
+    log_info "Copying OSM style to build/stage/styles/osm..."
 
     if [ ! -d "build/style" ]; then
         log_error "Style directory not found: $OPENMAPTILES_DIR/build/style"
         exit 1
     fi
 
-    if ! mkdir -p "$DATA_DIR/styles/osm"; then
-        log_error "Failed to create directory: $DATA_DIR/styles/osm"
+    if ! mkdir -p "$STAGE_DIR/styles/osm"; then
+        log_error "Failed to create directory: $STAGE_DIR/styles/osm"
         exit 1
     fi
 
-    if ! cp -pr build/style/* "$DATA_DIR/styles/osm/"; then
+    if ! cp -pr build/style/* "$STAGE_DIR/styles/osm/"; then
         log_error "Failed to copy OSM style"
         exit 1
     fi
 
-    log_info "✓ OSM style copied to data/styles/osm"
+    log_info "✓ OSM style copied to build/stage/styles/osm"
 }
 
 #==============================================================================
@@ -290,7 +297,7 @@ copy_osm_style() {
 
 fix_style_json() {
     local style_name="$1"
-    local style_dir="$DATA_DIR/styles/$style_name"
+    local style_dir="$STAGE_DIR/styles/$style_name"
     local style_file="$style_dir/style.json"
 
     log_info "Fixing $style_name/style.json..."
@@ -394,14 +401,14 @@ setup_osm_bright_repo() {
 }
 
 copy_osm_bright_style() {
-    log_info "Copying OSM Bright style to data/styles/osm-bright..."
+    log_info "Copying OSM Bright style to build/stage/styles/osm-bright..."
 
     if [ ! -f "style-local.json" ]; then
         log_error "style-local.json not found in $OSM_BRIGHT_DIR"
         exit 1
     fi
 
-    local target_dir="$DATA_DIR/styles/osm-bright"
+    local target_dir="$STAGE_DIR/styles/osm-bright"
 
     if ! mkdir -p "$target_dir"; then
         log_error "Failed to create directory: $target_dir"
@@ -425,7 +432,68 @@ copy_osm_bright_style() {
         log_warn "Failed to set permissions on OSM Bright files"
     }
 
-    log_info "✓ OSM Bright style copied to data/styles/osm-bright"
+    log_info "✓ OSM Bright style copied to build/stage/styles/osm-bright"
+}
+
+#==============================================================================
+# Install Staged Files
+#==============================================================================
+
+# Copy only files with changed content from build/stage to data/.
+# Unchanged files keep their mtime. Thus the fingerprint of the tile cache
+# does not change, and a recreate does not clear the cache without a reason.
+CHANGED_FILES=0
+
+install_staged_files() {
+    log_info "Installing changed files to data/..."
+
+    local list
+    if ! list=$(mktemp); then
+        log_error "Failed to create temporary file"
+        exit 1
+    fi
+    TMP_FILE="$list"
+
+    if ! (cd "$STAGE_DIR" && find . -type f -print0) > "$list"; then
+        log_error "Failed to list $STAGE_DIR"
+        exit 1
+    fi
+
+    local rel src dst tmp
+    while IFS= read -r -d '' rel; do
+        rel="${rel#./}"
+        src="$STAGE_DIR/$rel"
+        dst="$DATA_DIR/$rel"
+
+        if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
+            continue
+        fi
+
+        if ! mkdir -p "$(dirname "$dst")"; then
+            log_error "Failed to create directory for $rel"
+            exit 1
+        fi
+
+        # Copy to a temporary name, then rename: readers never see a partial file
+        tmp="$(dirname "$dst")/.$(basename "$dst").tmp"
+        if ! cp --preserve=mode "$src" "$tmp" || ! mv -f "$tmp" "$dst"; then
+            rm -f "$tmp"
+            log_error "Failed to install $rel"
+            exit 1
+        fi
+        log_info "  changed: $rel"
+        CHANGED_FILES=$((CHANGED_FILES + 1))
+    done < "$list"
+
+    rm -f "$list"
+    TMP_FILE=""
+    rm -rf "$STAGE_DIR"
+
+    if [ "$CHANGED_FILES" -eq 0 ]; then
+        log_info "✓ No changes, data/ not modified"
+    else
+        log_info "✓ $CHANGED_FILES files changed in data/"
+    fi
 }
 
 #==============================================================================
@@ -467,6 +535,11 @@ main() {
     fix_style_json "osm-bright"
     echo ""
 
+    # Phase 4: Install
+    log_info "--- Phase 4: Install Changed Files ---"
+    install_staged_files
+    echo ""
+
     # Success
     log_info "=== ✓ Setup Complete ==="
     echo ""
@@ -479,8 +552,12 @@ main() {
     log_info "  - ./build/openmaptiles"
     log_info "  - ./build/osm-bright-gl-style"
     echo ""
-    log_info "Next steps:"
-    log_info "  docker compose up -d --force-recreate"
+    if [ "$CHANGED_FILES" -eq 0 ]; then
+        log_info "No files changed. A restart is not necessary."
+    else
+        log_info "Next steps (the restart clears the tile cache):"
+        log_info "  docker compose up -d --force-recreate"
+    fi
     echo ""
 }
 

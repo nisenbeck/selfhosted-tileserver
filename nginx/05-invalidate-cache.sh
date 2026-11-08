@@ -10,7 +10,6 @@ CACHE_DIR=/var/cache/nginx
 STAMP="$CACHE_DIR/data.fingerprint"
 LIST=/tmp/data.list
 SORTED=/tmp/data.list.sorted
-UNREADABLE=/tmp/data.unreadable
 
 log()   { echo "$ME: $*"; }
 warn()  { echo "$ME: WARNING: $*" >&2; }
@@ -24,30 +23,24 @@ main() {
     fi
 
     # 1. A missing MBTiles file usually means an incorrect mount. Do not touch the cache.
+    #    [ -f ] follows symbolic links, a dangling link does not count.
     found=
     for f in "$DATA_DIR"/tiles/*.mbtiles; do
-        if [ -f "$f" ] && [ -r "$f" ]; then
+        if [ -f "$f" ]; then
             found=1
             break
         fi
     done
     if [ -z "$found" ]; then
-        warn "no readable *.mbtiles file in $DATA_DIR/tiles, cache not changed"
+        warn "no *.mbtiles file in $DATA_DIR/tiles, cache not changed"
         return 0
     fi
 
     # 2. Fingerprint from path, size and mtime of all data files (no content hash).
+    #    Metadata needs no read permission on the files. -L uses the link targets.
+    #    find fails on unreadable directories and link loops: then use no partial list.
     #    Write to files and check exit codes: dash has no reliable pipefail.
-    if ! find "$DATA_DIR" -path "$DATA_DIR/cache" -prune -o ! -readable -print > "$UNREADABLE"; then
-        error "cannot scan $DATA_DIR, cache not changed"
-        return 1
-    fi
-    if [ -s "$UNREADABLE" ]; then
-        error "unreadable entries in $DATA_DIR, cache not changed:"
-        head -n 10 "$UNREADABLE" >&2
-        return 1
-    fi
-    if ! find "$DATA_DIR" -path "$DATA_DIR/cache" -prune -o -type f -printf '%P %s %T@\n' > "$LIST"; then
+    if ! find -L "$DATA_DIR" -path "$DATA_DIR/cache" -prune -o ! -type d -printf '%P %s %T@\n' > "$LIST"; then
         error "cannot list $DATA_DIR, cache not changed"
         return 1
     fi
@@ -95,7 +88,7 @@ main() {
 
 ( main )
 rc=$?
-rm -f "$LIST" "$SORTED" "$UNREADABLE"
+rm -f "$LIST" "$SORTED"
 if [ "$rc" -ne 0 ]; then
     error "cache invalidation failed (exit $rc), nginx starts with the existing cache"
 fi

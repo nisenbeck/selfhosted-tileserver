@@ -29,7 +29,9 @@ Init Container → creates cache directory with correct permissions
 - At each start, `nginx/05-invalidate-cache.sh` calculates a fingerprint of `data/` (path, size and modification time of all files, except `data/cache/`). The script compares it with the stamp file `data/cache/data.fingerprint`. If the values are different, the script deletes the cache before nginx starts.
 - The fingerprint includes the MBTiles files, `config.json`, styles, sprites and fonts.
 - A restart without a data change (for example, an image update) keeps the cache.
-- If `data/tiles/` has no readable `*.mbtiles` file or a file in `data/` is not readable, the script does not change the cache and logs a warning or an error. Usually, this is an incorrect mount.
+- The script follows symbolic links and uses the size and modification time of the link target. The target must be mounted in `tileserver-cache` too.
+- The fingerprint needs no read permission for the files. A directory in `data/` must be readable and executable for uid 101.
+- If `data/tiles/` has no `*.mbtiles` file (also a dangling link), a directory is not readable or there is a symbolic link loop, the script does not change the cache and logs a warning or an error. Usually, this is an incorrect mount.
 
 **Start order:**
 - `tileserver-cache` starts only when `tileserver-app` is healthy (`/health` returns 200 only after all data is loaded).

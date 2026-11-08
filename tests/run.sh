@@ -103,6 +103,7 @@ stamp() { docker exec "$NGINX" cat "$C/data.fingerprint" 2>/dev/null; }
 tile_files() { docker exec "$NGINX" find "$C/tiles" -type f | wc -l; }
 
 eq() { [ "$1" = "$2" ]; }
+not() { ! "$@"; }
 ne() { [ "$1" != "$2" ]; }
 is_hash() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{64}$'; }
 
@@ -202,31 +203,40 @@ check "stamp unchanged" eq "$(stamp)" "$s0"
 check "tile is HIT" eq "$(header X-Cache-Status "$(req)")" HIT
 check "upstream not called" eq "$(count)" "$n0"
 
-section "No MBTiles file"
-mv "$DATA/tiles/test.mbtiles" "$WORK/test.mbtiles"
-echo changed >> "$DATA/config.json"
-start_nginx || exit 1
-check "log: warning" log_has "WARNING: no readable \*.mbtiles"
-check "stamp unchanged" eq "$(stamp)" "$s0"
-check "cache kept" eq "$(header X-Cache-Status "$(req)")" HIT
-mv "$WORK/test.mbtiles" "$DATA/tiles/test.mbtiles"
-
 section "Unreadable file in the data directory"
+# The fingerprint needs only metadata. A file that uid 101 cannot read is no error.
 chmod 000 "$DATA/styles/test/style.json"
 start_nginx || exit 1
-check "nginx starts" true
-check "log: error" log_has "ERROR: unreadable entries"
+check "log: data not changed" log_has "data not changed, cache kept"
+check "no error in the log" not log_has "ERROR:"
 check "stamp unchanged" eq "$(stamp)" "$s0"
 check "cache kept" eq "$(header X-Cache-Status "$(req)")" HIT
 chmod 644 "$DATA/styles/test/style.json"
 
+section "No MBTiles file"
+mv "$DATA/tiles/test.mbtiles" "$WORK/test.mbtiles"
+echo changed >> "$DATA/config.json"
+start_nginx || exit 1
+check "log: warning" log_has "WARNING: no \*.mbtiles"
+check "stamp unchanged" eq "$(stamp)" "$s0"
+check "cache kept" eq "$(header X-Cache-Status "$(req)")" HIT
+mv "$WORK/test.mbtiles" "$DATA/tiles/test.mbtiles"
+
 section "Unreadable directory in the data directory"
 chmod 000 "$DATA/fonts/Test Regular"
 start_nginx || exit 1
-check "log: error" log_has "ERROR:"
+check "log: error" log_has "ERROR: cannot list"
 check "stamp unchanged" eq "$(stamp)" "$s0"
 check "cache kept" eq "$(header X-Cache-Status "$(req)")" HIT
 chmod 755 "$DATA/fonts/Test Regular"
+
+section "Symbolic link loop in the data directory"
+ln -s .. "$DATA/styles/test/loop"
+start_nginx || exit 1
+check "log: error" log_has "ERROR: cannot list"
+check "stamp unchanged" eq "$(stamp)" "$s0"
+check "cache kept" eq "$(header X-Cache-Status "$(req)")" HIT
+rm "$DATA/styles/test/loop"
 
 section "Unexpected error in the script"
 start_nginx -e INVALIDATE_CACHE_FORCE_ERROR=1 || exit 1
@@ -246,7 +256,30 @@ n0=$(count)
 check "tile is MISS" eq "$(header X-Cache-Status "$(req)")" MISS
 check "upstream called" eq "$(count)" $((n0 + 1))
 
+section "MBTiles file as a symbolic link"
+# The link target is outside /data, in a separate mount.
+mkdir -p "$WORK/ext"
+mv "$DATA/tiles/test.mbtiles" "$WORK/ext/test.mbtiles"
+ln -s /ext/test.mbtiles "$DATA/tiles/test.mbtiles"
+start_nginx -v "$WORK/ext:/ext:ro" || exit 1
+check "same target size and mtime: data not changed" log_has "data not changed, cache kept"
+check "stamp unchanged" eq "$(stamp)" "$s1"
+echo changed >> "$WORK/ext/test.mbtiles"
+start_nginx -v "$WORK/ext:/ext:ro" || exit 1
+check "changed link target: data changed" log_has "data changed, clearing cache"
+s2=$(stamp)
+check "stamp has a new value" test -n "$s2" -a "$s2" != "$s1"
+start_nginx || exit 1
+check "dangling link: warning" log_has "WARNING: no \*.mbtiles"
+check "dangling link: stamp unchanged" eq "$(stamp)" "$s2"
+rm "$DATA/tiles/test.mbtiles"
+mv "$WORK/ext/test.mbtiles" "$DATA/tiles/test.mbtiles"
+
 section "Stamp file after the cache loader ran"
+start_nginx || exit 1
+check "same file as the link target: data not changed" log_has "data not changed, cache kept"
+s3=$(stamp)
+req >/dev/null
 # The loader deletes unknown files in the cache path. A probe file shows that it ran.
 docker exec "$NGINX" sh -c "echo x > $C/tiles/.probe" || fail "create probe"
 echo "  waiting for the cache loader (up to 120 s) ..."
@@ -256,7 +289,7 @@ while [ $i -lt 120 ] && docker exec "$NGINX" test -e "$C/tiles/.probe"; do
     i=$((i + 2))
 done
 check "cache loader ran (probe deleted after ${i} s)" docker exec "$NGINX" test ! -e "$C/tiles/.probe"
-check "stamp still exists" eq "$(stamp)" "$s1"
+check "stamp still exists" eq "$(stamp)" "$s3"
 check "cached tile still HIT" eq "$(header X-Cache-Status "$(req)")" HIT
 
 # --- result ----------------------------------------------------------------

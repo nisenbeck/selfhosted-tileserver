@@ -137,7 +137,7 @@ GET /styles/{style}/{z}/{x}/{y}@3x.webp    # High-DPI resolution (WebP)
 - Successful tiles (200): Valid until the data changes (technical limit 365 days)
 - Not found (404): Cached for 1 hour
 - Other errors: Cached for 1 minute
-- Cache header: `X-Cache-Status` (HIT/MISS/EXPIRED)
+- Cache header: `X-Cache-Status` (for example `HIT`, `MISS`, `STALE`, `UPDATING`)
 
 Set these environment variables (for example in a `.env` file next to `docker-compose.yaml`) to limit the disk space:
 
@@ -177,6 +177,17 @@ docker compose up -d --force-recreate
 ```
 
 Do not use `docker compose restart`. It does not wait until `tileserver-app` is healthy (see [Architecture](#architecture)).
+
+### Clear the Cache Manually
+
+Some changes are not changes of `data/`, for example an update of the TileServer GL image with a new renderer. In this case, the cache keeps the old tiles until the data changes. To clear the cache, delete the stamp file and recreate the containers:
+
+```bash
+docker compose exec tileserver-cache rm /var/cache/nginx/data.fingerprint
+docker compose up -d --force-recreate
+```
+
+Without a stamp file, the startup script clears the cache.
 
 ### Copy a New MBTiles File
 
@@ -241,19 +252,17 @@ The cache is stored in `data/cache/`. It persists across container restarts if t
   - Germany: ~2-3 GB
   - Europe: ~20-30 GB
   - Planet: ~100+ GB
+  - Tile cache: up to `CACHE_MAX_SIZE` (default 25 GB). nginx keeps `CACHE_MIN_FREE` (default 20 GB) free on the file system.
 - **CPU:** Multi-core recommended (used during tile generation)
 
 ### Software Dependencies
 
-Automatically installed by scripts:
-- `git`
-- `docker`
-- `docker-compose-plugin`
-- `curl`
-- `jq`
-- `sed`
-- `make`
-- `openjdk-21-jre`
+Install before you start:
+- `docker` with the Compose plugin (`docker compose`)
+
+The setup scripts install missing packages with `apt-get` (Debian/Ubuntu). Thus they need root permissions:
+- `setup-styles.sh`: `git`, `jq`, `sed`, `make`
+- `setup-tiles.sh`: `curl`, `jq`, `openjdk-21-jre`
 
 ## Available Styles
 
@@ -267,7 +276,7 @@ Clean, bright color scheme optimized for readability, based on the official OSM 
 
 Both styles are pre-configured to use local MBTiles data and are accessible through the nginx cache.
 
-### Performance issues
+## Performance
 
 - Increase `CACHE_MAX_SIZE` for a larger cache
 - Add more RAM to tile generation: `JAVA_TOOL_OPTIONS="-Xmx16G"`

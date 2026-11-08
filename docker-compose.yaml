@@ -7,8 +7,14 @@ services:
     networks:
       - tileserver-net
     restart: "no"
-    entrypoint: |
-      /bin/sh -c "mkdir -p /data/cache && chown -R 101:101 /data/cache"
+    # Change the owner only where it is wrong. A recursive chown writes the
+    # inode of every cache file (millions) at each start.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /data/cache &&
+        find /data/cache \( ! -user 101 -o ! -group 101 \) -exec chown -h 101:101 {} +
     volumes:
       - ./data/cache:/data/cache
 

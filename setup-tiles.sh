@@ -407,8 +407,8 @@ main() {
     log_info '    }'
     log_info '  }'
     echo ""
-    log_info "Then restart tileserver:"
-    log_info "  docker compose restart"
+    log_info "Then recreate the containers (restart does not respect the start order):"
+    log_info "  docker compose up -d --force-recreate"
     echo ""
 }
 

@@ -480,7 +480,7 @@ main() {
     log_info "  - ./build/osm-bright-gl-style"
     echo ""
     log_info "Next steps:"
-    log_info "  docker compose restart"
+    log_info "  docker compose up -d --force-recreate"
     echo ""
 }
 

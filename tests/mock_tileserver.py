@@ -1,5 +1,6 @@
 # Minimal TileServer GL stand-in for tests/run.sh.
 # Serves a fixed tile with a content-based weak ETag and counts tile requests.
+# Style "missing" returns 404 (like TileServer GL while it loads), style "error" 503.
 import hashlib
 import base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,6 +20,10 @@ class Handler(BaseHTTPRequestHandler):
             body = str(count).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
+        elif self.path.startswith(("/styles/missing/", "/styles/error/")):
+            count += 1
+            body = b"error"
+            self.send_response(404 if self.path.startswith("/styles/missing/") else 503)
         elif self.path.startswith("/styles/"):
             count += 1
             body = TILE

@@ -44,9 +44,9 @@
             # Proxy configuration with caching
             proxy_cache tile_cache;
             proxy_cache_key "$style:$scale:$z:$x:$y:$format";
+            # Cache only 200. TileServer GL returns 404 while it loads, and an error
+            # in the cache would stay after a restart without a data change.
             proxy_cache_valid 200 365d;
-            proxy_cache_valid 404 1h;
-            proxy_cache_valid any 1m;
             proxy_cache_methods GET HEAD;
 
             proxy_cache_lock on;

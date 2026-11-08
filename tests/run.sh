@@ -89,7 +89,11 @@ log_has() { logs | grep -q -- "$1"; }
 
 # Response headers of a tile request. Extra args go to curl.
 req() {
-    docker exec "$NGINX" curl -s -D - -o /dev/null "$@" "http://127.0.0.1:8081$TILE" | tr -d '\r'
+    req_path "$TILE" "$@"
+}
+req_path() {
+    path=$1; shift
+    docker exec "$NGINX" curl -s -D - -o /dev/null "$@" "http://127.0.0.1:8081$path" | tr -d '\r'
 }
 header() { printf '%s\n' "$2" | grep -i "^$1:" | head -n 1 | sed 's/^[^:]*: *//'; }
 header_count() { printf '%s\n' "$2" | grep -ci "^$1:"; }
@@ -161,6 +165,18 @@ check "one Access-Control-Allow-Origin header" eq "$(header_count Access-Control
 check "no Last-Modified header" eq "$(header_count Last-Modified "$h")" 0
 etag=$(header ETag "$h")
 check "ETag passed through" ne "$etag" ""
+
+section "Error responses are not cached"
+for code_style in 404:missing 503:error; do
+    code=${code_style%%:*}
+    path=/styles/${code_style#*:}/1/0/0.png
+    n0=$(count)
+    h1=$(req_path "$path")
+    h2=$(req_path "$path")
+    check "$code passed through" eq "$(status "$h1")" "$code"
+    check "$code not cached (second request is $(header X-Cache-Status "$h2"))" eq "$(header X-Cache-Status "$h2")" MISS
+    check "$code: upstream called twice" eq "$(count)" $((n0 + 2))
+done
 
 section "Conditional request with the ETag"
 n0=$(count)

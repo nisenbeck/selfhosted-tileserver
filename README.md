@@ -135,8 +135,7 @@ GET /styles/{style}/{z}/{x}/{y}@3x.webp    # High-DPI resolution (WebP)
 
 **Server-side cache behavior:**
 - Successful tiles (200): Valid until the data changes (technical limit 365 days)
-- Not found (404): Cached for 1 hour
-- Other errors: Cached for 1 minute
+- Errors (for example 404 while TileServer GL loads the data): Not cached
 - Cache header: `X-Cache-Status` (for example `HIT`, `MISS`, `STALE`, `UPDATING`)
 
 Set these environment variables (for example in a `.env` file next to `docker-compose.yaml`) to limit the disk space:

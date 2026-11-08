@@ -11,7 +11,10 @@
 
     # Tiles live in a subdirectory. The cache loader deletes unknown files in the
     # cache path, so the stamp file of 05-invalidate-cache.sh must stay outside.
-    proxy_cache_path /var/cache/nginx/tiles levels=1:2 keys_zone=tile_cache:512m max_size=10g inactive=14d use_temp_path=off;
+    # Entries stay valid until the data changes (the startup script clears the cache).
+    proxy_cache_path /var/cache/nginx/tiles levels=1:2 keys_zone=tile_cache:512m
+                     max_size=${CACHE_MAX_SIZE} min_free=${CACHE_MIN_FREE}
+                     inactive=${CACHE_INACTIVE} use_temp_path=off;
 
     proxy_connect_timeout       300;
     proxy_send_timeout          300;
@@ -41,7 +44,7 @@
             # Proxy configuration with caching
             proxy_cache tile_cache;
             proxy_cache_key "$style:$scale:$z:$x:$y:$format";
-            proxy_cache_valid 200 7d;
+            proxy_cache_valid 200 365d;
             proxy_cache_valid 404 1h;
             proxy_cache_valid any 1m;
             proxy_cache_methods GET HEAD;
@@ -49,6 +52,8 @@
             proxy_cache_lock on;
             proxy_cache_lock_timeout 5s;
             proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+            # Cache duration is set here only, never by upstream headers.
+            proxy_ignore_headers Cache-Control Expires;
             proxy_hide_header Cache-Control;
             # Client caching: 7 days fresh, 14 days stale-while-revalidate/stale-if-error
             add_header Cache-Control "max-age=604800, stale-while-revalidate=1209600, stale-if-error=1209600";

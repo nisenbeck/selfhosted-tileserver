@@ -59,3 +59,6 @@ services:
       - no-new-privileges
     environment:
       - TILESERVER_APP=tileserver-app:8080
+      - CACHE_MAX_SIZE=${CACHE_MAX_SIZE:-25g}
+      - CACHE_MIN_FREE=${CACHE_MIN_FREE:-20g}
+      - CACHE_INACTIVE=${CACHE_INACTIVE:-30d}

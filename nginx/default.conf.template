@@ -55,8 +55,11 @@
             # Cache duration is set here only, never by upstream headers.
             proxy_ignore_headers Cache-Control Expires;
             proxy_hide_header Cache-Control;
-            # Client caching: 7 days fresh, 14 days stale-while-revalidate/stale-if-error
-            add_header Cache-Control "max-age=604800, stale-while-revalidate=1209600, stale-if-error=1209600";
+            # Last-Modified is the render time and changes after the cache is cleared.
+            # nginx sends 304 only if If-Modified-Since also matches, so revalidate with the ETag only.
+            proxy_hide_header Last-Modified;
+            # Client caching: 1 day fresh, then revalidate in the background with the ETag
+            add_header Cache-Control "max-age=86400, stale-while-revalidate=604800";
             add_header X-Cache-Status $upstream_cache_status always;
             proxy_hide_header Access-Control-Allow-Origin;
             add_header 'Access-Control-Allow-Origin' '*' always;

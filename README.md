@@ -8,7 +8,7 @@ This setup provides a complete self-hosted map tile server using:
 - **TileServer GL** - Vector tile server with MapLibre GL rendering
 - **OpenMapTiles** - Open-source map styles (OSM + OSM Bright)
 - **Planetiler** - Fast OpenStreetMap tile generator
-- **Nginx Caching Proxy** - High-performance tile cache with 14-day retention
+- **Nginx Caching Proxy** - Tile cache that stays valid until the data changes
 
 ## Architecture
 ```
@@ -23,6 +23,18 @@ MBTiles Database
 Init Container → creates cache directory with correct permissions
 ```
 
+**Cache invalidation:**
+- Cached tiles stay valid until the data changes. The cache only reduces the rendering load on TileServer GL.
+- TileServer GL loads new data only at a restart. Thus a restart is the moment to clear the cache.
+- At each start, `nginx/05-invalidate-cache.sh` calculates a fingerprint of `data/` (path, size and modification time of all files, except `data/cache/`). The script compares it with the stamp file `data/cache/data.fingerprint`. If the values are different, the script deletes the cache before nginx starts.
+- The fingerprint includes the MBTiles files, `config.json`, styles, sprites and fonts.
+- A restart without a data change (for example, an image update) keeps the cache.
+- If `data/tiles/` has no readable `*.mbtiles` file or a file in `data/` is not readable, the script does not change the cache and logs a warning or an error. Usually, this is an incorrect mount.
+
+**Start order:**
+- `tileserver-cache` starts only when `tileserver-app` is healthy (`/health` returns 200 only after all data is loaded). Else, a request during the restart can put an old tile into the empty cache.
+- `docker compose restart` ignores this order. Use `docker compose up -d --force-recreate` (see [Update Data](#update-data)).
+
 **Security:**
 - TileServer GL is only accessible via localhost (Port 8080)
 - Nginx cache is only accessible via localhost (Port 8081)
@@ -36,10 +48,15 @@ Init Container → creates cache directory with correct permissions
 ├── setup-tiles.sh            # Generate MBTiles from OSM data
 ├── docker-compose.yaml       # Container orchestration
 ├── nginx/
-│   └── default.conf.template # Nginx cache configuration
+│   ├── default.conf.template # Nginx cache configuration
+│   └── 05-invalidate-cache.sh # Clears the cache when the data changes
+├── tests/
+│   └── run.sh                # Tests for the cache (Docker only)
 ├── data/
 │   ├── config.json           # TileServer configuration
-│   ├── cache/                # Nginx tile cache (Docker volume)
+│   ├── cache/                # Nginx cache (Docker volume)
+│   │   ├── data.fingerprint  # Stamp of the cached data
+│   │   └── tiles/            # Cached tiles
 │   ├── fonts/                # Web fonts (Noto Sans, Roboto, etc.)
 │   ├── styles/               # Map styles
 │   │   ├── osm/              # OpenMapTiles default style
@@ -117,15 +134,26 @@ GET /styles/{style}/{z}/{x}/{y}@3x.webp    # High-DPI resolution (WebP)
 **Available formats:** `png`, `webp`
 
 **Server-side cache behavior:**
-- Successful tiles (200): Cached for 7 days, evicted after 14 days of inactivity
+- Successful tiles (200): Valid until the data changes (technical limit 365 days)
 - Not found (404): Cached for 1 hour
 - Other errors: Cached for 1 minute
 - Cache header: `X-Cache-Status` (HIT/MISS/EXPIRED)
 
+Set these environment variables (for example in a `.env` file next to `docker-compose.yaml`) to limit the disk space:
+
+| Variable | Default | Function |
+|---|---|---|
+| `CACHE_MAX_SIZE` | `25g` | Maximum cache size. When the cache reaches this size, nginx removes the tiles with the oldest access. |
+| `CACHE_MIN_FREE` | `20g` | Minimum free space on the file system. If there is less free space, nginx removes tiles. |
+| `CACHE_INACTIVE` | `30d` | nginx removes tiles that no client requested in this period. |
+
+nginx renders a removed tile again on the next request. `CACHE_MAX_SIZE` is a soft limit: the cache can be larger for a short time. If the cache always stays at `CACHE_MAX_SIZE`, increase the value.
+
 **Client-side cache behavior:**
-- `max-age`: 7 days
-- `stale-while-revalidate`: 14 days
-- `stale-if-error`: 14 days
+- `Cache-Control: max-age=86400, stale-while-revalidate=604800`
+- The browser uses a tile for 1 day. After this, it shows the tile from its cache and asks the server in the background.
+- The browser revalidates with the `ETag` (`If-None-Match`). nginx answers from the cache with `304 Not Modified`. The `ETag` depends on the tile contents. Thus it stays the same after the cache is cleared, if the tile did not change.
+- nginx removes the `Last-Modified` header. TileServer GL sets it to the render time. Thus it changes when a tile is rendered again, and a revalidation with `If-Modified-Since` would always return the full tile.
 
 ### All Other Endpoints
 
@@ -140,12 +168,37 @@ All requests outside the raster tile pattern return `404 Not Found`.
 JAVA_TOOL_OPTIONS="-Xms8G -Xmx8G" ./setup-tiles.sh germany
 ```
 
+### Update Data
+
+TileServer GL loads new data only at a restart. A restart also clears the cache if the data changed. Always use this command after a change in `data/`:
+
+```bash
+docker compose up -d --force-recreate
+```
+
+Do not use `docker compose restart`. It does not wait until `tileserver-app` is healthy (see [Architecture](#architecture)).
+
+### Copy a New MBTiles File
+
+The MBTiles file is usually generated on a different machine. Do not copy it directly over the old file, because TileServer GL can read a partly written file. Copy to a temporary name on the same file system, then rename it with `mv`. A rename on the same file system is atomic.
+
+```bash
+# On the build machine
+scp tiles.mbtiles server:/path/to/selfhosted-tileserver/data/tiles/tiles.mbtiles.tmp
+
+# On the server
+mv data/tiles/tiles.mbtiles.tmp data/tiles/tiles.mbtiles
+docker compose up -d --force-recreate
+```
+
+`rsync` writes to a temporary file and renames it by default. `scp` does not.
+
 ### Update Styles
 
 ```bash
 # Re-run to get latest styles
 ./setup-styles.sh
-docker compose down && docker compose up -d
+docker compose up -d --force-recreate
 ```
 
 ### Regenerate Tiles for Different Region
@@ -153,7 +206,7 @@ docker compose down && docker compose up -d
 ```bash
 # Switch from Germany to Europe
 ./setup-tiles.sh europe
-docker compose down && docker compose up -d
+docker compose up -d --force-recreate
 ```
 
 **Note:** Old tiles are automatically replaced (no backup is created due to file size).
@@ -161,15 +214,23 @@ docker compose down && docker compose up -d
 ## Nginx Cache Configuration
 
 The nginx caching proxy provides:
-- **7-day server-side tile caching** with 14-day inactive eviction
+- **Server-side tile caching** until the data changes
+- **Configurable cache limits** (`CACHE_MAX_SIZE`, `CACHE_MIN_FREE`, `CACHE_INACTIVE`)
 - **CORS headers** enabled for cross-origin requests
 - **Compression disabled** (PNG/WebP tiles are already compressed)
 - **Cache locking** to prevent thundering herd
 - **Stale cache serving** during backend errors
-- **Client-side caching** with `stale-while-revalidate` and `stale-if-error`
-- **10GB max cache size** with automatic eviction
+- **Client-side caching** with `stale-while-revalidate` and `ETag` revalidation
 
-Cache is stored in a Docker volume and persists across container restarts.
+The cache is stored in `data/cache/`. It persists across container restarts if the data does not change.
+
+### Tests
+
+`tests/run.sh` tests the nginx configuration and the cache invalidation. It needs only Docker. A small mock replaces TileServer GL. The tests take approximately 2 minutes.
+
+```bash
+./tests/run.sh
+```
 
 ## System Requirements
 
@@ -208,7 +269,7 @@ Both styles are pre-configured to use local MBTiles data and are accessible thro
 
 ### Performance issues
 
-- Increase `max_size` in `nginx/default.conf.template` for larger cache
+- Increase `CACHE_MAX_SIZE` for a larger cache
 - Add more RAM to tile generation: `JAVA_TOOL_OPTIONS="-Xmx16G"`
 - Use faster storage
 

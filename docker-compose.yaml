@@ -39,6 +39,8 @@ services:
       - tileserver-app
     volumes:
       - ./nginx:/etc/nginx/templates:ro
+      - ./nginx/05-invalidate-cache.sh:/docker-entrypoint.d/05-invalidate-cache.sh:ro
+      - ./data:/data:ro
       - ./data/cache:/var/cache/nginx
     ports:
       - "127.0.0.1:8081:8081"

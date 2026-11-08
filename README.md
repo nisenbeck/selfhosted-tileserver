@@ -26,7 +26,7 @@ Init Container → creates cache directory with correct permissions
 **Cache invalidation:**
 - Cached tiles stay valid until the data changes. The cache only reduces the rendering load on TileServer GL.
 - TileServer GL loads new data only at a restart. Thus a restart is the moment to clear the cache.
-- At each start, `nginx/05-invalidate-cache.sh` calculates a fingerprint of `data/` (path, size and modification time of all files, except `data/cache/`). The script compares it with the stamp file `data/cache/data.fingerprint`. If the values are different, the script deletes the cache before nginx starts.
+- At each start, `nginx/05-invalidate-cache.sh` calculates a fingerprint of `data/` (path, size and modification time of all files, except `data/cache/`). The script compares it with the stamp file `data/cache/data.fingerprint`. If the values are different, the script moves the cache to `data/cache/trash-*` before nginx starts. A rename is fast, thus nginx starts without delay. A background process deletes the trash while nginx runs. When it ends, nginx logs `unknown process ... exited with code 0`. This is expected.
 - The fingerprint includes the MBTiles files, `config.json`, styles, sprites and fonts.
 - A restart without a data change (for example, an image update) keeps the cache.
 - The script follows symbolic links and uses the size and modification time of the link target. The target must be mounted in `tileserver-cache` too.
@@ -59,7 +59,8 @@ Init Container → creates cache directory with correct permissions
 │   ├── config.json           # TileServer configuration
 │   ├── cache/                # Nginx cache (Docker volume)
 │   │   ├── data.fingerprint  # Stamp of the cached data
-│   │   └── tiles/            # Cached tiles
+│   │   ├── tiles/            # Cached tiles
+│   │   └── trash-*/          # Old cache, deleted in the background
 │   ├── fonts/                # Web fonts (Noto Sans, Roboto, etc.)
 │   ├── styles/               # Map styles
 │   │   ├── osm/              # OpenMapTiles default style

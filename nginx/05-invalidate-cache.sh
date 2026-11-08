@@ -1,6 +1,7 @@
 #!/bin/sh
 # Clears the nginx tile cache when the data in /data has changed.
-# Runs from /docker-entrypoint.d/ before nginx starts.
+# Runs from /docker-entrypoint.d/ before nginx starts. The old cache is moved
+# to trash-* (fast rename) and deleted in the background while nginx runs.
 # Always exits 0: a failing entrypoint script stops the container.
 # No "set -e": every error is handled explicitly.
 
@@ -65,17 +66,25 @@ main() {
         return 0
     fi
 
-    # 4. Data changed or state unknown: clear everything except the stamp.
-    if [ -z "$(find "$CACHE_DIR" -mindepth 1 -maxdepth 1 ! -name data.fingerprint -print -quit)" ]; then
+    # 4. Data changed or state unknown: move everything except the stamp and
+    #    older trash into a new trash directory. nginx creates tiles/ again.
+    if [ -z "$(find "$CACHE_DIR" -mindepth 1 -maxdepth 1 ! -name data.fingerprint ! -name 'trash-*' -print -quit)" ]; then
         log "cache is empty"
-    elif [ -z "$old" ]; then
-        log "no stamp file, clearing cache"
     else
-        log "data changed, clearing cache"
-    fi
-    if ! find "$CACHE_DIR" -mindepth 1 -maxdepth 1 ! -name data.fingerprint -exec rm -rf -- {} +; then
-        error "cannot clear $CACHE_DIR, stamp not written"
-        return 1
+        if [ -z "$old" ]; then
+            log "no stamp file, clearing cache"
+        else
+            log "data changed, clearing cache"
+        fi
+        trash="$CACHE_DIR/trash-$(date +%s)-$$"
+        if ! mkdir "$trash"; then
+            error "cannot create $trash, stamp not written"
+            return 1
+        fi
+        if ! find "$CACHE_DIR" -mindepth 1 -maxdepth 1 ! -name data.fingerprint ! -name 'trash-*' -exec mv -t "$trash" -- {} +; then
+            error "cannot move the cache to $trash, stamp not written"
+            return 1
+        fi
     fi
     if ! { printf '%s\n' "$new" > "$STAMP.tmp" && mv -f "$STAMP.tmp" "$STAMP"; }; then
         error "cannot write $STAMP"
@@ -86,10 +95,21 @@ main() {
     return 0
 }
 
+# Delete all trash directories in the background, also those of an earlier
+# start that stopped before the deletion was complete. When rm ends, nginx
+# (PID 1) logs "unknown process ... exited with code 0". This is expected.
+purge_trash() {
+    set -- "$CACHE_DIR"/trash-*
+    [ -e "$1" ] || return 0
+    log "deleting old cache in the background: $*"
+    ( nice -n 19 rm -rf -- "$@" || error "cannot delete $*" ) < /dev/null &
+}
+
 ( main )
 rc=$?
 rm -f "$LIST" "$SORTED"
 if [ "$rc" -ne 0 ]; then
     error "cache invalidation failed (exit $rc), nginx starts with the existing cache"
 fi
+purge_trash
 exit 0

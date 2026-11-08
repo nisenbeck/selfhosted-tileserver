@@ -101,6 +101,18 @@ status() { printf '%s\n' "$1" | head -n 1 | cut -d ' ' -f 2; }
 count() { docker exec "$NGINX" curl -s "http://$MOCK:8080/__count"; }
 stamp() { docker exec "$NGINX" cat "$C/data.fingerprint" 2>/dev/null; }
 tile_files() { docker exec "$NGINX" find "$C/tiles" -type f | wc -l; }
+trash_dirs() { docker exec "$NGINX" find "$C" -mindepth 1 -maxdepth 1 -name 'trash-*' | wc -l; }
+# The old cache is deleted in the background after nginx starts.
+trash_gone() {
+    i=0
+    while [ $i -lt 20 ]; do
+        [ "$(trash_dirs)" -eq 0 ] && return 0
+        sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+no_nginx_alerts() { ! logs | grep -Eq '\[(alert|emerg|crit)\]'; }
 
 eq() { [ "$1" = "$2" ]; }
 not() { ! "$@"; }
@@ -134,9 +146,12 @@ check "CACHE_INACTIVE defaults to 30d" eq "$(printf '%s\n' "$cfg" | grep -c 'CAC
 section "First start, no stamp, cache has old files"
 in_cache "mkdir -p $C/0/ab $C/f/12 && echo x > $C/0/ab/0123456789abcdef && echo x > $C/.hidden" || fail "prepare cache"
 start_nginx || exit 1
+check "log: clearing cache" log_has "no stamp file, clearing cache"
+check "log: background deletion" log_has "deleting old cache in the background"
+check "trash deleted" trash_gone
 check "old entries removed" eq "$(docker exec "$NGINX" ls -A "$C" | tr '\n' ' ')" "data.fingerprint tiles "
 check "stamp written" is_hash "$(stamp)"
-check "log: clearing cache" log_has "no stamp file, clearing cache"
+check "no nginx alerts" no_nginx_alerts
 
 section "First start, no stamp, cache is empty"
 docker rm -f "$NGINX" >/dev/null
@@ -252,9 +267,31 @@ check "log: data changed" log_has "data changed, clearing cache"
 s1=$(stamp)
 check "stamp has a new value" test -n "$s1" -a "$s1" != "$s0"
 check "cache is empty" eq "$(tile_files)" 0
+check "trash deleted" trash_gone
 n0=$(count)
 check "tile is MISS" eq "$(header X-Cache-Status "$(req)")" MISS
 check "upstream called" eq "$(count)" $((n0 + 1))
+
+section "Trash of an earlier start"
+# A stop during the background deletion leaves a trash directory.
+in_cache "mkdir -p $C/trash-1-1/0/ab && echo x > $C/trash-1-1/0/ab/0123456789abcdef" || fail "prepare trash"
+start_nginx || exit 1
+check "log: data not changed" log_has "data not changed, cache kept"
+check "log: background deletion" log_has "deleting old cache in the background: $C/trash-1-1"
+check "trash deleted" trash_gone
+check "cache kept" eq "$(header X-Cache-Status "$(req)")" HIT
+
+section "Trash that cannot be deleted"
+in_cache "mkdir -p $C/trash-2-2/locked && echo x > $C/trash-2-2/locked/f && chmod 500 $C/trash-2-2/locked" || fail "prepare trash"
+start_nginx || exit 1
+check "nginx serves the cache" eq "$(header X-Cache-Status "$(req)")" HIT
+i=0
+while [ $i -lt 10 ] && ! log_has "ERROR: cannot delete"; do sleep 1; i=$((i + 1)); done
+check "log: error" log_has "ERROR: cannot delete $C/trash-2-2"
+check "no nginx alerts" no_nginx_alerts
+in_cache "chmod 700 $C/trash-2-2/locked" || fail "unlock trash"
+start_nginx || exit 1
+check "next start deletes it" trash_gone
 
 section "MBTiles file as a symbolic link"
 # The link target is outside /data, in a separate mount.

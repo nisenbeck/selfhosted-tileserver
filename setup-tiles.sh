@@ -308,26 +308,33 @@ deploy_mbtiles() {
         exit 1
     fi
 
-    # Remove existing file if present (no backup for large files)
+    # Existing file is replaced (no backup for large files)
     if [ -f "$target_file" ]; then
         local file_size=$(du -h "$target_file" | cut -f1)
-        log_warn "Removing existing tiles.mbtiles ($file_size)"
-        if ! rm -f "$target_file"; then
-            log_error "Failed to remove existing file"
-            exit 1
-        fi
+        log_warn "Replacing existing tiles.mbtiles ($file_size)"
     fi
 
-    # Move file to generic name
-    if ! mv "$source_file" "$target_file"; then
+    # Move to a temporary name in the target directory first. If build/ is on
+    # a different file system, this is a copy, and the file is incomplete for
+    # some time. The rename in the same directory is atomic: TileServer GL
+    # always sees the complete old or the complete new file.
+    local tmp_file="$TILES_DIR/.tiles.mbtiles.tmp"
+    if ! mv "$source_file" "$tmp_file"; then
         log_error "Failed to move MBTiles to data/tiles"
+        rm -f "$tmp_file"
         exit 1
     fi
 
     # Set permissions
-    chmod 644 "$target_file" || {
-        log_warn "Failed to set permissions on $target_file"
+    chmod 644 "$tmp_file" || {
+        log_warn "Failed to set permissions on $tmp_file"
     }
+
+    if ! mv -f "$tmp_file" "$target_file"; then
+        log_error "Failed to rename $tmp_file to $target_file"
+        rm -f "$tmp_file"
+        exit 1
+    fi
 
     log_info "✓ MBTiles deployed: $target_file"
     log_info "  Source region: $REGION"

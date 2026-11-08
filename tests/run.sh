@@ -1,6 +1,7 @@
 #!/bin/sh
-# Tests for nginx/default.conf.template and nginx/05-invalidate-cache.sh.
-# Needs only docker and a POSIX shell. Run: ./tests/run.sh
+# Tests for nginx/default.conf.template, nginx/05-invalidate-cache.sh and
+# the cache-related parts of docker-compose.yaml.
+# Needs only docker with the Compose plugin and a POSIX shell. Run: ./tests/run.sh
 # A mock upstream replaces TileServer GL. Takes about 2 minutes, because the
 # last test waits for the nginx cache loader (starts 60 s after nginx).
 
@@ -119,7 +120,19 @@ not() { ! "$@"; }
 ne() { [ "$1" != "$2" ]; }
 is_hash() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{64}$'; }
 
+# Evaluate a Python expression on the Compose configuration (variable c).
+# Runs in the mock container, the host needs no Python.
+cq() {
+    printf '%s' "$CFG" | docker exec -i "$MOCK" python -c \
+        'import json, sys; c = json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"
+}
+
 # --- setup -----------------------------------------------------------------
+
+if ! docker compose version >/dev/null 2>&1; then
+    echo "ERROR: the docker compose plugin is missing"
+    exit 1
+fi
 
 echo "Work directory: $WORK"
 mkdir -p "$DATA/tiles" "$DATA/styles/test" "$DATA/fonts/Test Regular"
@@ -137,11 +150,37 @@ docker run -d --name "$MOCK" --network "$NET" \
 
 # --- tests -----------------------------------------------------------------
 
-section "Compose defaults for the cache limits"
-cfg=$(cd "$REPO" && CACHE_MAX_SIZE='' CACHE_MIN_FREE='' CACHE_INACTIVE='' docker compose config 2>/dev/null)
-check "CACHE_MAX_SIZE defaults to 25g" eq "$(printf '%s\n' "$cfg" | grep -c 'CACHE_MAX_SIZE: 25g')" 1
-check "CACHE_MIN_FREE defaults to 20g" eq "$(printf '%s\n' "$cfg" | grep -c 'CACHE_MIN_FREE: 20g')" 1
-check "CACHE_INACTIVE defaults to 30d" eq "$(printf '%s\n' "$cfg" | grep -c 'CACHE_INACTIVE: 30d')" 1
+section "Compose configuration"
+# Empty values select the defaults, also when the shell or a .env file sets them.
+if ! CFG=$(cd "$REPO" && CACHE_MAX_SIZE='' CACHE_MIN_FREE='' CACHE_INACTIVE='' \
+        docker compose config --format json); then
+    echo "ERROR: docker compose config failed"
+    exit 1
+fi
+APP="c['services']['tileserver-app']"
+CC="c['services']['tileserver-cache']"
+INIT="c['services']['tileserver-init']"
+check "CACHE_MAX_SIZE defaults to 25g" eq "$(cq "${CC}['environment']['CACHE_MAX_SIZE']")" 25g
+check "CACHE_MIN_FREE defaults to 20g" eq "$(cq "${CC}['environment']['CACHE_MIN_FREE']")" 20g
+check "CACHE_INACTIVE defaults to 30d" eq "$(cq "${CC}['environment']['CACHE_INACTIVE']")" 30d
+check "app healthcheck requests /health" eq "$(cq "any('/health' in a for a in ${APP}['healthcheck']['test'])")" True
+check "app healthcheck start_period 120s" eq "$(cq "${APP}['healthcheck']['start_period']")" 2m0s
+check "cache waits for healthy app" eq "$(cq "${CC}['depends_on']['tileserver-app']['condition']")" service_healthy
+check "app dependency is not required" eq "$(cq "${CC}['depends_on']['tileserver-app']['required']")" False
+check "cache waits for init" eq "$(cq "${CC}['depends_on']['tileserver-init']['condition']")" service_completed_successfully
+check "script mounted read-only" eq "$(cq "[v['read_only'] for v in ${CC}['volumes'] if v['target'] == '/docker-entrypoint.d/$SCRIPT'][0]")" True
+check "data mounted read-only" eq "$(cq "[v['read_only'] for v in ${CC}['volumes'] if v['target'] == '/data'][0]")" True
+check "cache mounted writable" eq "$(cq "[v.get('read_only', False) for v in ${CC}['volumes'] if v['target'] == '$C'][0]")" False
+
+section "tileserver-init fixes wrong owners"
+INIT_IMAGE=$(cq "${INIT}['image']")
+INIT_SCRIPT=$(cq "${INIT}['entrypoint'][2]")
+check "entrypoint is /bin/sh -c" eq "$(cq "${INIT}['entrypoint'][:2]")" "['/bin/sh', '-c']"
+docker run --rm -u 0 --entrypoint sh -v "$DATA:/d" "$NGINX_IMAGE" \
+    -c 'mkdir -p /d/cache/tiles/x && touch /d/cache/tiles/x/f && chown -R 0:0 /d/cache' || fail "prepare cache"
+docker run --rm --entrypoint /bin/sh -v "$CACHE:/data/cache" "$INIT_IMAGE" -c "$INIT_SCRIPT" || fail "init failed"
+check "all entries belong to 101:101" eq "$(in_cache "find $C ! -user 101 -o ! -group 101" | wc -l)" 0
+reset_cache
 
 section "First start, no stamp, cache has old files"
 in_cache "mkdir -p $C/0/ab $C/f/12 && echo x > $C/0/ab/0123456789abcdef && echo x > $C/.hidden" || fail "prepare cache"
@@ -255,7 +294,6 @@ rm "$DATA/styles/test/loop"
 
 section "Unexpected error in the script"
 start_nginx -e INVALIDATE_CACHE_FORCE_ERROR=1 || exit 1
-check "nginx starts" true
 check "log: error" log_has "ERROR: cache invalidation failed"
 check "stamp unchanged" eq "$(stamp)" "$s0"
 check "cache kept" eq "$(header X-Cache-Status "$(req)")" HIT

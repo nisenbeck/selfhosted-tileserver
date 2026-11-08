@@ -242,7 +242,7 @@ The cache is stored in `data/cache/`. It persists across container restarts if t
 
 ### Tests
 
-`tests/run.sh` tests the nginx configuration and the cache invalidation. It needs only Docker. A small mock replaces TileServer GL. The tests take approximately 2 minutes.
+`tests/run.sh` tests the nginx configuration, the cache invalidation and the cache-related parts of `docker-compose.yaml`. It needs only Docker with the Compose plugin. A small mock replaces TileServer GL. The tests take approximately 2 minutes.
 
 ```bash
 ./tests/run.sh

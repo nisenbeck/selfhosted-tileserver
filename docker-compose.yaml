@@ -27,6 +27,13 @@ services:
       - "127.0.0.1:8080:8080"
     security_opt:
       - no-new-privileges
+    # /health returns 503 until all styles and data are loaded.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   tileserver-cache:
     container_name: tileserver-cache
@@ -34,9 +41,13 @@ services:
     image: docker.io/nginxinc/nginx-unprivileged:1.31
     networks:
       - tileserver-net
+    # Start only when tileserver-app serves the current data. Else an old tile
+    # can enter the freshly cleared cache and stay until the next data change.
     depends_on:
-      - tileserver-init
-      - tileserver-app
+      tileserver-init:
+        condition: service_completed_successfully
+      tileserver-app:
+        condition: service_healthy
     volumes:
       - ./nginx:/etc/nginx/templates:ro
       - ./nginx/05-invalidate-cache.sh:/docker-entrypoint.d/05-invalidate-cache.sh:ro

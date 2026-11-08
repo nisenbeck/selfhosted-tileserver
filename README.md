@@ -32,7 +32,8 @@ Init Container → creates cache directory with correct permissions
 - If `data/tiles/` has no readable `*.mbtiles` file or a file in `data/` is not readable, the script does not change the cache and logs a warning or an error. Usually, this is an incorrect mount.
 
 **Start order:**
-- `tileserver-cache` starts only when `tileserver-app` is healthy (`/health` returns 200 only after all data is loaded). Else, a request during the restart can put an old tile into the empty cache.
+- `tileserver-cache` starts only when `tileserver-app` is healthy (`/health` returns 200 only after all data is loaded).
+- If `tileserver-app` does not become healthy, Compose logs a warning and starts `tileserver-cache` anyway. Cached tiles stay available. nginx does not cache errors.
 - `docker compose restart` ignores this order. Use `docker compose up -d --force-recreate` (see [Update Data](#update-data)).
 
 **Security:**
@@ -257,7 +258,7 @@ The cache is stored in `data/cache/`. It persists across container restarts if t
 ### Software Dependencies
 
 Install before you start:
-- `docker` with the Compose plugin (`docker compose`)
+- `docker` with the Compose plugin (`docker compose`) 2.20 or later
 
 The setup scripts install missing packages with `apt-get` (Debian/Ubuntu). Thus they need root permissions:
 - `setup-styles.sh`: `git`, `jq`, `sed`, `make`

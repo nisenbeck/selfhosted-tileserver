@@ -33,7 +33,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      # Grace period only: the container is healthy at the first successful check.
+      start_period: 120s
 
   tileserver-cache:
     container_name: tileserver-cache

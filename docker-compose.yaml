@@ -1,6 +1,13 @@
 networks:
    tileserver-net:
 
+# Both containers log every request (tileserver-app also every healthcheck)
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "100m"
+    max-file: "5"
+
 services:
   tileserver-init:
     image: docker.io/library/alpine
@@ -33,6 +40,7 @@ services:
       - "127.0.0.1:8080:8080"
     security_opt:
       - no-new-privileges
+    logging: *logging
     # /health returns 503 until all styles and data are loaded.
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -66,6 +74,7 @@ services:
       - "127.0.0.1:8081:8081"
     security_opt:
       - no-new-privileges
+    logging: *logging
     environment:
       - TILESERVER_APP=tileserver-app:8080
       - CACHE_MAX_SIZE=${CACHE_MAX_SIZE:-25g}

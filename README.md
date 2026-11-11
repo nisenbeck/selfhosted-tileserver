@@ -240,6 +240,8 @@ The nginx caching proxy provides:
 
 The cache is stored in `data/cache/`. It persists across container restarts if the data does not change.
 
+The container logs of `tileserver-app` and `tileserver-cache` rotate at 5 files of 100 MB each (`logging` in `docker-compose.yaml`).
+
 ### Tests
 
 `tests/run.sh` tests the nginx configuration, the cache invalidation and the cache-related parts of `docker-compose.yaml`. It needs only Docker with the Compose plugin. A small mock replaces TileServer GL. The tests take approximately 2 minutes.
